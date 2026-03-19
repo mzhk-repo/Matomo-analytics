@@ -254,3 +254,11 @@
 - **Change:** Реалізовано запис метрик через `trap on_exit` для обох сценаріїв (success/failure), плюс fallback-створення каталогу метрик через `docker run` у root-owned шляхах.
 - **Change:** Оновлено `.env.example` (optional `BACKUP_METRICS_FILE`, `BACKUP_METRICS_ENV_LABEL`, `BACKUP_METRICS_SERVICE_LABEL`) і `docs/backup-restore-runbook.md` (секція перевірки backup metrics).
 - **Verification:** `bash scripts/backup.sh --dry-run` виконався успішно (`exit code 0`), файл `matomo_backup.prom` створено, `matomo_backup_last_status=1`.
+
+## 2026-03-19 — CI workflow refactored to single `ci-checks` job (incremental step 1)
+
+- **Context:** Почали інкрементну перебудову CI/CD за вимогою: спочатку тільки CI-частина з подальшим додаванням CD після погодження.
+- **Change:** Оновлено `.github/workflows/ci-checks.yml`: зведено перевірки в один job `ci-checks` (ShellCheck, Hadolint, Gitleaks, `docker compose config --quiet`, ports policy).
+- **Change:** Додано GitHub Actions best-practice елементи: `permissions: contents: read` та `concurrency` (cancel in-progress на тому ж ref).
+- **DevSecOps:** Залишено лише ключові перевірки без перевантаження пайплайна: secret scan (`gitleaks`), shell lint, dockerfile lint, compose/policy checks.
+- **Note:** Для `uses:` у GitHub Actions тег `@latest` не підтримується (не резолвиться), тому використано валідні стабільні теги (`actions/checkout@v4`, `gitleaks-action@v2`, `action-shellcheck@2.0.0`). Для docker image в hadolint використано `hadolint/hadolint:latest`.

@@ -5,8 +5,15 @@ on:
     branches: [ main, master ]
   pull_request:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-checks-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  shellcheck:
+  ci-checks:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -17,38 +24,23 @@ jobs:
         with:
           scandir: ./scripts
 
-  hadolint:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
       - name: Run Hadolint on Dockerfiles (if present)
         run: |
           set -euo pipefail
-          files=$(find . -type f \( -name 'Dockerfile' -o -name '*.Dockerfile' \) | tr '\n' ' ')
-          if [ -z "$files" ]; then
+          mapfile -t files < <(find . -type f \( -name 'Dockerfile' -o -name '*.Dockerfile' \))
+          if [ "${#files[@]}" -eq 0 ]; then
             echo "No Dockerfiles found, skipping hadolint"
             exit 0
           fi
-          docker run --rm -i hadolint/hadolint < $(echo "$files" | awk '{print $1}')
-
-  gitleaks:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+          for file in "${files[@]}"; do
+            echo "Linting $file"
+            docker run --rm -i hadolint/hadolint:latest hadolint - < "$file"
+          done
 
       - name: Run Gitleaks
         uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  compose-and-policy:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
 
       - name: Prepare env file for compose validation
         run: cp .env.example .env
@@ -57,4 +49,4 @@ jobs:
         run: docker compose -f docker-compose.yaml config --quiet
 
       - name: Check ports policy
-        run: ./scripts/check-ports-policy.sh docker-compose.yaml
+        run: bash ./scripts/check-ports-policy.sh docker-compose.yaml
