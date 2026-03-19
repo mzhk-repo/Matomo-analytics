@@ -98,50 +98,10 @@ jobs:
           printf '%s\n' "$SERVER_SSH_KEY" > ~/.ssh/id_ed25519
           ssh-keyscan -H "${{ secrets.SERVER_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null || true
 
-      - name: Install Tailscale
-        run: |
-          set -euo pipefail
-          curl -fsSL https://tailscale.com/install.sh | sh
-
-      - name: Connect to Tailnet
-        env:
-          TAILSCALE_EPHEMERAL_AUTH_KEY: ${{ secrets.TAILSCALE_EPHEMERAL_AUTH_KEY }}
-        run: |
-          set -euo pipefail
-          TS_SOCKET="/var/run/tailscale/tailscaled.sock"
-
-          sudo systemctl start tailscaled
-
-          ready=0
-          for _ in $(seq 1 40); do
-            if sudo tailscale --socket="$TS_SOCKET" status >/dev/null 2>&1; then
-              ready=1
-              break
-            fi
-            sleep 1
-          done
-
-          if [[ "$ready" -ne 1 ]]; then
-            echo "ERROR: tailscaled socket is not ready: $TS_SOCKET"
-            sudo systemctl status tailscaled --no-pager || true
-            sudo journalctl -u tailscaled -n 100 --no-pager || true
-            sudo tail -n 100 /tmp/tailscaled.log || true
-            exit 1
-          fi
-
-          if ! sudo tailscale --socket="$TS_SOCKET" up \
-            --authkey "$TAILSCALE_EPHEMERAL_AUTH_KEY" \
-            --accept-routes=true \
-            --accept-dns=false \
-            --hostname "gha-matomo-${{ github.run_id }}"; then
-            echo "ERROR: tailscale up failed."
-            echo "HINT: your tailnet policy/auth key may require hardware attestation, which is unavailable on GitHub-hosted runners (no TPM)."
-            echo "Use a CI-specific auth key/policy without mandatory hardware attestation, or run deploy on a self-hosted runner with TPM support."
-            sudo journalctl -u tailscaled -n 100 --no-pager || true
-            exit 1
-          fi
-
-          sudo tailscale --socket="$TS_SOCKET" status
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@main
+        with:
+          authkey: ${{ secrets.TAILSCALE_EPHEMERAL_AUTH_KEY }}
 
       - name: Deploy on remote host
         env:
@@ -167,7 +127,3 @@ jobs:
           docker compose -f docker-compose.yaml ps
           EOF
 
-      - name: Disconnect Tailscale
-        if: always()
-        run: |
-          sudo tailscale --socket=/var/run/tailscale/tailscaled.sock down || true

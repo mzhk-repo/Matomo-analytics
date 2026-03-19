@@ -300,3 +300,10 @@
 - **Fix:** У `.github/workflows/ci-checks.yml` прибрано ручний запуск `tailscaled`; залишено лише `systemctl start tailscaled` + readiness check сокета.
 - **Fix:** Додано fail-fast обробку помилки `tailscale up` з чіткою підказкою: для GitHub-hosted runner потрібен CI-ключ/політика без mandatory hardware attestation або self-hosted runner з TPM.
 - **Verification:** Workflow YAML валідний (`yaml_parse=ok`), diagnostics без помилок.
+
+## 2026-03-19 — CD refactor: switched to `tailscale/github-action@v4` connection flow
+
+- **Context:** За запитом замінено ручний механізм старту/підключення Tailscale на перевірений шаблон із `.archive/deploy-monitoring.yml`.
+- **Change:** У `.github/workflows/ci-checks.yml` видалено кроки ручного `Install Tailscale`, `Connect to Tailnet` (через `tailscaled/tailscale up`) і `Disconnect Tailscale`.
+- **Change:** Додано крок `Connect to Tailscale` через `uses: tailscale/github-action@v4` з `authkey: ${{ secrets.TAILSCALE_EPHEMERAL_AUTH_KEY }}`.
+- **Verification:** Workflow YAML валідний (`yaml_parse=ok`).
