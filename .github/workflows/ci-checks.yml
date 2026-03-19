@@ -75,13 +75,14 @@ jobs:
 
       - name: Validate required secrets
         env:
-          TAILSCALE_EPHEMERAL_AUTH_KEY: ${{ secrets.TAILSCALE_EPHEMERAL_AUTH_KEY }}
+          TS_OAUTH_CLIENT_ID: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          TS_OAUTH_SECRET: ${{ secrets.TS_OAUTH_SECRET }}
           SERVER_HOST: ${{ secrets.SERVER_HOST }}
           SERVER_USER: ${{ secrets.SERVER_USER }}
           SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
         run: |
           set -euo pipefail
-          for key in TAILSCALE_EPHEMERAL_AUTH_KEY SERVER_HOST SERVER_USER SERVER_SSH_KEY; do
+          for key in TS_OAUTH_CLIENT_ID TS_OAUTH_SECRET SERVER_HOST SERVER_USER SERVER_SSH_KEY; do
             if [[ -z "${!key:-}" ]]; then
               echo "ERROR: required secret is missing: $key"
               exit 1
@@ -101,7 +102,9 @@ jobs:
       - name: Connect to Tailscale
         uses: tailscale/github-action@main
         with:
-          authkey: ${{ secrets.TAILSCALE_EPHEMERAL_AUTH_KEY }}
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
 
       - name: Deploy on remote host
         env:
