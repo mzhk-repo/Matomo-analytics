@@ -56,6 +56,47 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Setup Trivy
+        uses: aquasecurity/setup-trivy@v0.2.2
+
+      - name: Run Trivy filesystem scan (with logs)
+        shell: bash
+        run: |
+          set -euo pipefail
+          report_file="trivy-report.txt"
+
+          set +e
+          trivy fs \
+            --scanners vuln,misconfig,secret \
+            --vuln-type os,library \
+            --severity HIGH,CRITICAL \
+            --ignore-unfixed \
+            --format table \
+            --output "$report_file" \
+            .
+          trivy_exit=$?
+          set -e
+
+          if [[ -f "$report_file" ]]; then
+            echo "Trivy report:"
+            cat "$report_file"
+          else
+            echo "Trivy did not generate a report file."
+          fi
+
+          if [[ $trivy_exit -ne 0 ]]; then
+            echo "Trivy scan failed with exit code $trivy_exit."
+            exit "$trivy_exit"
+          fi
+
+      - name: Upload Trivy report artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-report-${{ github.run_id }}
+          path: trivy-report.txt
+          if-no-files-found: warn
+
       - name: Prepare env file for compose validation
         run: cp .env.example .env
 
@@ -77,29 +118,9 @@ jobs:
       - name: Dependency review
         uses: actions/dependency-review-action@v4
 
-  trivy-scan:
-    name: trivy-scan
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - name: Checkout
-        uses: actions/checkout@main
-
-      - name: Run Trivy filesystem scan
-        uses: aquasecurity/trivy-action@0.28.0
-        with:
-          scan-type: fs
-          scan-ref: .
-          scanners: vuln,misconfig,secret
-          vuln-type: os,library
-          severity: HIGH,CRITICAL
-          ignore-unfixed: true
-          format: table
-          exit-code: 1
-
   cd-deploy:
     name: cd-deploy
-    needs: [ci-checks, trivy-scan]
+    needs: ci-checks
     if: |
       github.event_name == 'push' && (
         github.ref == 'refs/heads/main' ||
