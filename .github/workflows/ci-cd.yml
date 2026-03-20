@@ -27,14 +27,18 @@ jobs:
     concurrency:
       group: ci-checks-${{ github.ref }}
       cancel-in-progress: true
+    permissions:
+      contents: read
+      packages: read
+      pull-requests: read
     steps:
       - name: Checkout
-        uses: actions/checkout@main
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
       - name: Run ShellCheck
-        uses: ludeeus/action-shellcheck@master
+        uses: ludeeus/action-shellcheck@2.0.0
         with:
           scandir: ./scripts
 
@@ -52,12 +56,12 @@ jobs:
           done
 
       - name: Run Gitleaks
-        uses: gitleaks/gitleaks-action@master
+        uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Setup Trivy
-        uses: aquasecurity/setup-trivy@v0.2.2
+        uses: aquasecurity/trivy-action@v0.35.0
 
       - name: Run Trivy filesystem scan (with logs)
         shell: bash
@@ -106,16 +110,8 @@ jobs:
       - name: Check ports policy
         run: bash ./scripts/check-ports-policy.sh docker-compose.yaml
 
-  dependency-review:
-    name: dependency-review
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: read
-      pull-requests: read
-    steps:
       - name: Dependency review
+        if: github.event_name == 'pull_request'
         uses: actions/dependency-review-action@v4
 
   cd-deploy:
@@ -135,7 +131,7 @@ jobs:
     environment: production
     steps:
       - name: Checkout
-        uses: actions/checkout@main
+        uses: actions/checkout@v4
 
       - name: Validate required secrets
         env:
@@ -168,7 +164,7 @@ jobs:
           chmod 600 ~/.ssh/id_ed25519 ~/.ssh/known_hosts
 
       - name: Connect to Tailscale
-        uses: tailscale/github-action@main
+        uses: tailscale/github-action@v2
         with:
           oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
           oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
