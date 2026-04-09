@@ -1,0 +1,50 @@
+services:
+  matomo-db:
+    container_name: !reset null
+    restart: !reset null
+    mem_limit: !reset null
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+        max_attempts: 5
+        window: 2m
+      placement:
+        constraints:
+          - node.labels.app_zone == manager
+  matomo-app:
+    container_name: !reset null
+    restart: !reset null
+    mem_limit: !reset null
+    depends_on: !reset []
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+        max_attempts: 5
+        window: 2m
+      placement:
+        constraints:
+          - node.labels.app_zone == manager
+  matomo-cron:
+    container_name: !reset null
+    restart: !reset null
+    mem_limit: !reset null
+    depends_on: !reset []
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+        max_attempts: 5
+        window: 2m
+      placement:
+        constraints:
+          - node.labels.app_zone == manager
+
+networks:
+  matomonet:
+    driver: overlay
+    internal: true

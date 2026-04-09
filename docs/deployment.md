@@ -12,6 +12,7 @@
 - існуюча Docker network `proxy-net`
 - працюючий Traefik у `proxy-net`
 - зовнішній ingress/tunnel шар на сервері, який веде `analytics.mylibrary.edu` на `http://traefik:80`
+- якщо TLS термінується до Traefik (наприклад Cloudflare Tunnel), прокинути до Matomo `X-Forwarded-Proto=https` (у цьому репо це робиться через labels `matomo-forwarded-*`)
 
 ## 3. Підготовка конфігурації
 
@@ -69,6 +70,29 @@ docker compose logs --tail=100
 - `matomo-cron` стартує коректно
 - Traefik бачить router/service для Matomo за labels
 
+### 6.1 Troubleshooting: нескінченні 302 редіректи
+
+Симптом:
+
+- запити до `https://<MATOMO_HOST>/` постійно повертають `302` з `Location: https://<MATOMO_HOST>/`
+
+Причина:
+
+- `force_ssl=1` у Matomo увімкнений, але до застосунку не доходить `X-Forwarded-Proto=https`
+
+Що перевірити:
+
+```bash
+curl -sSIL --max-redirs 5 "https://${MATOMO_HOST}"
+```
+
+Якщо бачите цикл `302`, перевірити що в `docker-compose.yaml` активні middleware:
+
+- `matomo-forwarded-https`
+- `matomo-forwarded-port`
+
+Після змін зробити redeploy стеку.
+
 ## 7. Matomo Installation Wizard
 
 Після доступності `https://analytics.mylibrary.edu`:
@@ -104,6 +128,28 @@ docker compose down
 - `backup.sh` і `restore.sh` реалізовані; для фактичного backup/upload/restore потрібні валідні `.env`, доступ до Docker daemon і налаштований `rclone` remote.
 - `check-disk.sh` готовий для локального/cron використання, але нотифікації ще не додані.
 - Успішний `docker compose up -d` залежить від реального `.env`, наявності `proxy-net` і готової зовнішньої маршрутизації до `http://traefik:80`.
+
+## 10.1 Swarm Redeploy (Phase 6+)
+
+Для Swarm не використовувати прямий:
+
+```bash
+docker stack deploy -c docker-compose.yaml -c docker-compose.swarm.yml matomo
+```
+
+Причина: `docker stack deploy` напряму не обробляє compose-merge/`!reset` так само, як `docker compose config`, через що можуть "просочуватись" compose-only поля (наприклад `mem_limit`).
+
+Канонічний шлях:
+
+```bash
+./scripts/deploy-orchestrator.sh --swarm matomo
+```
+
+Що робить скрипт:
+- рендерить merged manifest (`docker compose config`);
+- прибирає top-level `name:`;
+- нормалізує Swarm-сумісність (`published` як integer, видалення `host_ip`);
+- виконує `docker stack deploy` тільки по підготовленому manifest.
 
 ## 11. SSO (Phase 2.6) — LoginOIDC + Microsoft Entra ID
 

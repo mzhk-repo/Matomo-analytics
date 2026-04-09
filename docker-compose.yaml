@@ -61,11 +61,13 @@ services:
       - traefik.http.routers.matomo.rule=Host(`${MATOMO_HOST}`)
       - traefik.http.routers.matomo.entrypoints=web
       - traefik.http.services.matomo.loadbalancer.server.port=80
+      - traefik.http.middlewares.matomo-forwarded-https.headers.customrequestheaders.X-Forwarded-Proto=${MATOMO_PROXY_FORWARDED_PROTO:-https}
+      - traefik.http.middlewares.matomo-forwarded-port.headers.customrequestheaders.X-Forwarded-Port=${MATOMO_PROXY_FORWARDED_PORT:-443}
       - traefik.http.middlewares.matomo-tracker-rewrite-app.replacepathregex.regex=^/js/app\\.js$
       - traefik.http.middlewares.matomo-tracker-rewrite-app.replacepathregex.replacement=/matomo.js
       - traefik.http.middlewares.matomo-tracker-rewrite-ping.replacepathregex.regex=^/js/ping$
       - traefik.http.middlewares.matomo-tracker-rewrite-ping.replacepathregex.replacement=/matomo.php
-      - traefik.http.routers.matomo.middlewares=matomo-tracker-rewrite-app,matomo-tracker-rewrite-ping
+      - traefik.http.routers.matomo.middlewares=matomo-forwarded-https,matomo-forwarded-port,matomo-tracker-rewrite-app,matomo-tracker-rewrite-ping
 
   matomo-cron:
     image: ${CRON_IMAGE}
