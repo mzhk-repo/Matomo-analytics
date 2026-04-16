@@ -3,6 +3,25 @@ services:
     container_name: !reset null
     restart: !reset null
     mem_limit: !reset null
+    env_file: !reset []
+    environment: !override
+      MARIADB_DATABASE: ${DB_NAME}
+      MARIADB_USER: ${DB_USER}
+      MARIADB_PASSWORD_FILE: /run/secrets/db_password
+      MARIADB_ROOT_PASSWORD_FILE: /run/secrets/db_root_password
+    secrets:
+      - source: matomo_db_password
+        target: db_password
+      - source: matomo_db_root_password
+        target: db_root_password
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - mariadb-admin ping -h 127.0.0.1 -u root --password="$$(cat /run/secrets/db_root_password)"
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
     deploy:
       replicas: 1
       restart_policy:
@@ -18,6 +37,29 @@ services:
     restart: !reset null
     mem_limit: !reset null
     depends_on: !reset []
+    env_file: !reset []
+    environment: !reset null
+    secrets:
+      - source: app_env_payload
+        target: app_env_payload
+      - source: matomo_api_token
+        target: matomo_api_token
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - |
+        if [ -f /run/secrets/app_env_payload ]; then
+          while IFS= read -r line; do
+            case "$$line" in
+              ''|'#'*) continue ;;
+            esac
+            export "$$line"
+          done < /run/secrets/app_env_payload
+        fi
+        if [ -f /run/secrets/matomo_api_token ]; then
+          export MATOMO_API_TOKEN="$(cat /run/secrets/matomo_api_token)"
+        fi
+        exec /entrypoint.sh apache2-foreground
     deploy:
       replicas: 1
       restart_policy:
@@ -33,6 +75,29 @@ services:
     restart: !reset null
     mem_limit: !reset null
     depends_on: !reset []
+    env_file: !reset []
+    environment: !reset null
+    secrets:
+      - source: app_env_payload
+        target: app_env_payload
+      - source: matomo_api_token
+        target: matomo_api_token
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - |
+        if [ -f /run/secrets/app_env_payload ]; then
+          while IFS= read -r line; do
+            case "$$line" in
+              ''|'#'*) continue ;;
+            esac
+            export "$$line"
+          done < /run/secrets/app_env_payload
+        fi
+        if [ -f /run/secrets/matomo_api_token ]; then
+          export MATOMO_API_TOKEN="$(cat /run/secrets/matomo_api_token)"
+        fi
+        exec /entrypoint.sh /bin/sh -c 'while true; do php /var/www/html/console core:archive --url="https://${MATOMO_HOST}"; sleep 3600; done'
     deploy:
       replicas: 1
       restart_policy:
@@ -43,6 +108,20 @@ services:
       placement:
         constraints:
           - node.labels.app_zone == manager
+
+secrets:
+  app_env_payload:
+    external: true
+    name: ${MATOMO_APP_ENV_SECRET_NAME:-matomo_app_env_payload_dev_v1}
+  matomo_api_token:
+    external: true
+    name: ${MATOMO_API_TOKEN_SECRET_NAME:-matomo_api_token_dev_v1}
+  matomo_db_password:
+    external: true
+    name: ${MATOMO_DB_PASSWORD_SECRET_NAME:-matomo_db_password_dev_v1}
+  matomo_db_root_password:
+    external: true
+    name: ${MATOMO_DB_ROOT_PASSWORD_SECRET_NAME:-matomo_db_root_password_dev_v1}
 
 networks:
   matomonet:

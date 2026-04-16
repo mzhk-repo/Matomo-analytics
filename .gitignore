@@ -1,5 +1,6 @@
 # Secrets
 .env
+*.decrypted~env.*.enc
 
 # Runtime data
 .data/
