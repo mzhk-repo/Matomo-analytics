@@ -1,0 +1,176 @@
+name: matomo-analytics
+services:
+  matomo-app:
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+        max_attempts: 5
+        window: 2m0s
+      placement:
+        constraints:
+          - node.labels.app_zone == manager
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - |
+        if [ -f /run/secrets/app_env_payload ]; then
+          while IFS= read -r line; do
+            case "$$line" in
+              ''|'#'*) continue ;;
+            esac
+            export "$$line"
+          done < /run/secrets/app_env_payload
+        fi
+        if [ -f /run/secrets/matomo_api_token ]; then
+          export MATOMO_API_TOKEN="$$(cat /run/secrets/matomo_api_token)"
+        fi
+        exec /entrypoint.sh apache2-foreground
+    image: matomo:apache
+    labels:
+      traefik.docker.network: proxy-net
+      traefik.enable: "true"
+      traefik.http.middlewares.matomo-forwarded-https.headers.customrequestheaders.X-Forwarded-Proto: https
+      traefik.http.middlewares.matomo-forwarded-port.headers.customrequestheaders.X-Forwarded-Port: "443"
+      traefik.http.middlewares.matomo-tracker-rewrite-app.replacepathregex.regex: ^/js/app\\.js$$
+      traefik.http.middlewares.matomo-tracker-rewrite-app.replacepathregex.replacement: /matomo.js
+      traefik.http.middlewares.matomo-tracker-rewrite-ping.replacepathregex.regex: ^/js/ping$$
+      traefik.http.middlewares.matomo-tracker-rewrite-ping.replacepathregex.replacement: /matomo.php
+      traefik.http.routers.matomo.entrypoints: web
+      traefik.http.routers.matomo.middlewares: matomo-forwarded-https,matomo-forwarded-port,matomo-tracker-rewrite-app,matomo-tracker-rewrite-ping
+      traefik.http.routers.matomo.rule: Host(`matomo.pinokew.buzz`)
+      traefik.http.services.matomo.loadbalancer.server.port: "80"
+    logging:
+      driver: json-file
+      options:
+        max-file: "5"
+        max-size: 10m
+    networks:
+      matomonet: null
+      proxy-net: null
+    secrets:
+      - source: app_env_payload
+        target: app_env_payload
+      - source: matomo_api_token
+        target: matomo_api_token
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - type: bind
+        source: /srv/Matomo/./.data/matomo
+        target: /var/www/html
+        bind: {}
+  matomo-cron:
+    command:
+      - /bin/sh
+      - -c
+      - |
+        while true; do
+          php /var/www/html/console core:archive --url="https://matomo.pinokew.buzz";
+          sleep 3600;
+        done
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+        max_attempts: 5
+        window: 2m0s
+      placement:
+        constraints:
+          - node.labels.app_zone == manager
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - |
+        if [ -f /run/secrets/app_env_payload ]; then
+          while IFS= read -r line; do
+            case "$$line" in
+              ''|'#'*) continue ;;
+            esac
+            export "$$line"
+          done < /run/secrets/app_env_payload
+        fi
+        if [ -f /run/secrets/matomo_api_token ]; then
+          export MATOMO_API_TOKEN="$$(cat /run/secrets/matomo_api_token)"
+        fi
+        exec /entrypoint.sh /bin/sh -c 'while true; do php /var/www/html/console core:archive --url="https://matomo.pinokew.buzz"; sleep 3600; done'
+    image: matomo:fpm-alpine
+    networks:
+      matomonet: null
+    secrets:
+      - source: app_env_payload
+        target: app_env_payload
+      - source: matomo_api_token
+        target: matomo_api_token
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - type: bind
+        source: /srv/Matomo/./.data/matomo
+        target: /var/www/html
+        bind: {}
+    working_dir: /var/www/html
+  matomo-db:
+    command:
+      - --max_allowed_packet=64M
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+        max_attempts: 5
+        window: 2m0s
+      placement:
+        constraints:
+          - node.labels.app_zone == manager
+    environment:
+      MARIADB_DATABASE: matomo
+      MARIADB_PASSWORD_FILE: /run/secrets/db_password
+      MARIADB_ROOT_PASSWORD_FILE: /run/secrets/db_root_password
+      MARIADB_USER: matomo
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - mariadb-admin ping -h 127.0.0.1 -u root --password="$$(cat /run/secrets/db_root_password)"
+      timeout: 10s
+      interval: 30s
+      retries: 5
+      start_period: 30s
+    image: mariadb:11
+    networks:
+      matomonet: null
+    secrets:
+      - source: matomo_db_password
+        target: db_password
+      - source: matomo_db_root_password
+        target: db_root_password
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - type: bind
+        source: /srv/Matomo/./.data/db
+        target: /var/lib/mysql
+        bind: {}
+networks:
+  matomonet:
+    name: matomo-analytics_matomonet
+    driver: overlay
+    internal: true
+  proxy-net:
+    name: proxy-net
+    external: true
+secrets:
+  app_env_payload:
+    name: matomo_app_env_payload_dev_v1
+    external: true
+  matomo_api_token:
+    name: matomo_api_token_dev_v1
+    external: true
+  matomo_db_password:
+    name: matomo_db_password_dev_v1
+    external: true
+  matomo_db_root_password:
+    name: matomo_db_root_password_dev_v1
+    external: true

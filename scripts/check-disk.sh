@@ -1,16 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ENV_FILE="${1:-${ENV_FILE:-.env}}"
-
-if [[ ! -f "$ENV_FILE" ]]; then
-  echo "ERROR: env file not found: $ENV_FILE"
-  exit 2
-fi
-
-# shellcheck source=/dev/null
-source "$ENV_FILE"
-
 warn_threshold="${DISK_WARN_THRESHOLD:-80}"
 crit_threshold="${DISK_CRIT_THRESHOLD:-90}"
 
@@ -25,9 +15,9 @@ if (( warn_threshold < 0 || warn_threshold > 100 || crit_threshold < 0 || crit_t
 fi
 
 paths=(
-  "VOL_DB_PATH:$VOL_DB_PATH"
-  "VOL_MATOMO_DATA:$VOL_MATOMO_DATA"
-  "BACKUP_DIR:$BACKUP_DIR"
+  "VOL_DB_PATH:${VOL_DB_PATH:-}"
+  "VOL_MATOMO_DATA:${VOL_MATOMO_DATA:-}"
+  "BACKUP_DIR:${BACKUP_DIR:-}"
 )
 
 exit_code=0

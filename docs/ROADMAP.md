@@ -274,7 +274,7 @@ Cron-архівація вже налаштована у matomo-cron (Phase 1). 
 
 1. Читає всі параметри з env  
 2. Підтримує \--dry-run  
-3. mysqldump \--single-transaction через docker compose exec  
+3. mysqldump \--single-transaction через Swarm runtime (`docker exec` у running task `matomo_matomo-db`; compose fallback лише для локального dev)  
 4. Стиснення у gzip  
 5. rclone copy на $RCLONE\_REMOTE:$RCLONE\_DEST\_PATH  
 6. Prune локальних файлів старше $BACKUP\_RETENTION\_DAYS днів
@@ -334,7 +334,7 @@ Rclone вже налаштований на хості. RCLONE\_REMOTE та RCLO
 
 #### **Артефакти**
 
-* scripts/backup.sh, scripts/restore.sh  
+* scripts/backup.sh, scripts/restore.sh — автономні скрипти працюють через Swarm runtime (`DOCKER_RUNTIME_MODE=swarm`, `STACK_NAME=matomo`) і читають `env.<env>.enc` через SOPS `/dev/shm`  
 * scripts/apply-matomo-config.sh  
 * scripts/patch/patch-koha-matomo.sh  
 * docs/snippets/koha-opac-tracker.js  

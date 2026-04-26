@@ -322,3 +322,20 @@
 - **Verification:** Отримано `HTTP 200`, `Cache-Control: max-age=14400`, `Content-Type: text/javascript`, `Content-Length: 22211`.
 - **Verification:** Час відповіді склав приблизно `14.9 ms`, що вкладається в вимогу `< 200 ms`.
 - **Change:** У `docs/ROADMAP.md` пункти `matomo.js завантажується < 200ms` і `Cache-Control header присутній для matomo.js` позначено як виконані.
+
+## 2026-04-26 — scripts refactoring step 2: validation layer aligned
+
+- **Context:** Розпочато інкрементальний рефакторинг `scripts/` під Swarm + SOPS контракт за `docs/scrypts_refactoring.md`; крок 2 охоплює тільки validation-скрипти Категорії 1а.
+- **Change:** `scripts/check-disk.sh` більше не читає `.env` і не виконує `source`; він працює тільки з уже експортованими `VOL_DB_PATH`, `VOL_MATOMO_DATA`, `BACKUP_DIR`, `DISK_WARN_THRESHOLD`, `DISK_CRIT_THRESHOLD`.
+- **Change:** `scripts/deploy-orchestrator-swarm.sh` запускає validation-перевірки `check-ports-policy.sh` і `verify-env.sh` перед Swarm render/deploy; повідомлення fallback на `.env` уточнено як dev-only сценарій.
+- **Change:** `CHANGELOG.md` синхронізовано з фактичним розташуванням активного тому в `docs/changelogs/`.
+- **Verification:** `bash -n` і `shellcheck` для validation/orchestrator скриптів пройшли успішно; `check-ports-policy.sh docker-compose.yml`, `verify-env.sh .env`, `check-disk.sh` з експортованими тестовими шляхами та `ORCHESTRATOR_MODE=noop deploy-orchestrator-swarm.sh` виконались успішно.
+
+## 2026-04-26 — scripts refactoring step 3: deploy-adjacent scripts moved to orchestrator env
+
+- **Context:** Продовжено рефакторинг Категорії 1б для Swarm + SOPS flow без `source` для CI-generated env-файлів.
+- **Change:** Додано `scripts/lib/orchestrator-env.sh` для безпечного читання dotenv через `read_env_var`/`require_env_var` і нормалізованого checksum без друку секретів.
+- **Change:** `scripts/init-volumes.sh` переведено на `ORCHESTRATOR_ENV_FILE`/`--env-file` без `source`; збережено dev fallback на `.env` і dry-run режим.
+- **Change:** `scripts/apply-matomo-config.sh` переведено на безпечне читання env, підтримку `DOCKER_RUNTIME_MODE=compose|swarm` і checksum guard для Swarm `app_env_payload`; при розбіжності checksum скрипт виконує `docker service update --force` для `matomo-app` і `matomo-cron`, чекає новий container id і повторно звіряє checksum перед застосуванням Matomo config.
+- **Change:** `scripts/deploy-orchestrator-swarm.sh` тепер виконує порядок `1а validation -> init-volumes -> docker compose config -> docker stack deploy -> apply-matomo-config`.
+- **Verification:** `bash -n` і `shellcheck` для 1б/orchestrator скриптів пройшли успішно; `init-volumes.sh --env-file .env --dry-run`, негативні сценарії з відсутнім `ORCHESTRATOR_ENV_FILE` і `ORCHESTRATOR_MODE=noop deploy-orchestrator-swarm.sh` відпрацювали очікувано.
