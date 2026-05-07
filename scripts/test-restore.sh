@@ -2,12 +2,18 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-ENV_FILE="${ENV_FILE:-$ROOT_DIR/.env}"
+SCRIPT_DIR="${ROOT_DIR}/scripts"
+
+# shellcheck source=scripts/lib/autonomous-env.sh
+# shellcheck disable=SC1091
+. "${SCRIPT_DIR}/lib/autonomous-env.sh"
+
 DRY_RUN=false
+ENVIRONMENT_ARG=""
 
 usage() {
   cat <<'EOF'
-Usage: scripts/test-restore.sh [--dry-run] [backup-file.sql.gz|backup-file.sql]
+Usage: scripts/test-restore.sh [--env dev|prod] [--dry-run] [backup-file.sql.gz|backup-file.sql]
 
 Smoke test restore в тимчасовий MariaDB контейнер + експорт метрик у textfile collector.
 EOF
@@ -31,15 +37,6 @@ read_env_or_default() {
     return 0
   fi
 
-  if [[ -f "$ENV_FILE" ]]; then
-    local line
-    line="$(grep -E "^${key}=" "$ENV_FILE" | tail -n1 || true)"
-    if [[ -n "$line" ]]; then
-      printf '%s\n' "${line#*=}"
-      return 0
-    fi
-  fi
-
   printf '%s\n' "$default_value"
 }
 
@@ -53,10 +50,25 @@ abs_path() {
 }
 
 BACKUP_PATH=""
-for arg in "$@"; do
-  case "$arg" in
+while [[ "$#" -gt 0 ]]; do
+  case "$1" in
     --dry-run)
       DRY_RUN=true
+      ;;
+    --env)
+      shift
+      [[ "$#" -gt 0 ]] || {
+        echo "ERROR: --env requires value"
+        usage
+        exit 1
+      }
+      ENVIRONMENT_ARG="$1"
+      ;;
+    --env=*)
+      ENVIRONMENT_ARG="${1#--env=}"
+      ;;
+    dev|development|prod|production)
+      ENVIRONMENT_ARG="$1"
       ;;
     -h|--help)
       usage
@@ -64,15 +76,19 @@ for arg in "$@"; do
       ;;
     *)
       if [[ -z "$BACKUP_PATH" ]]; then
-        BACKUP_PATH="$arg"
+        BACKUP_PATH="$1"
       else
-        echo "ERROR: unexpected argument: $arg"
+        echo "ERROR: unexpected argument: $1"
         usage
         exit 1
       fi
       ;;
   esac
+  shift
 done
+
+load_autonomous_env "${ROOT_DIR}" "${ENVIRONMENT_ARG}"
+cd "${ROOT_DIR}"
 
 require_command docker
 require_command mktemp
@@ -217,7 +233,7 @@ if [[ "$BACKUP_PATH" == *.sql.gz ]]; then
   require_command gzip
   gzip -dc "$BACKUP_PATH" | docker exec -i "$container_name" mariadb -uroot -p"$smoke_root_password" "$smoke_db_name"
 else
-  cat "$BACKUP_PATH" | docker exec -i "$container_name" mariadb -uroot -p"$smoke_root_password" "$smoke_db_name"
+  docker exec -i "$container_name" mariadb -uroot -p"$smoke_root_password" "$smoke_db_name" < "$BACKUP_PATH"
 fi
 
 table_count="$(docker exec "$container_name" mariadb -N -uroot -p"$smoke_root_password" -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='${smoke_db_name}';")"

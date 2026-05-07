@@ -1,18 +1,40 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ENV_FILE="${1:-.env}"
-DRY_RUN="${2:-}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-if [[ ! -f "$ENV_FILE" ]]; then
-  echo "ERROR: $ENV_FILE not found"
-  exit 1
-fi
+# shellcheck source=scripts/lib/orchestrator-env.sh
+. "${SCRIPT_DIR}/lib/orchestrator-env.sh"
 
-set -a
-# shellcheck source=/dev/null
-. "$ENV_FILE"
-set +a
+ENV_FILE=""
+DRY_RUN=""
+
+while [[ "$#" -gt 0 ]]; do
+  case "$1" in
+    --env-file)
+      shift
+      [[ "$#" -gt 0 ]] || orchestrator_env_die "--env-file requires value"
+      ENV_FILE="$1"
+      ;;
+    --env-file=*)
+      ENV_FILE="${1#--env-file=}"
+      ;;
+    --dry-run)
+      DRY_RUN="--dry-run"
+      ;;
+    *)
+      if [[ -z "${ENV_FILE}" ]]; then
+        ENV_FILE="$1"
+      else
+        orchestrator_env_die "unexpected argument: $1"
+      fi
+      ;;
+  esac
+  shift
+done
+
+ENV_FILE="$(resolve_orchestrator_env_file "${PROJECT_ROOT}" "${ENV_FILE}")"
 
 required_vars=(
   VOL_DB_PATH
@@ -21,11 +43,7 @@ required_vars=(
 )
 
 for var_name in "${required_vars[@]}"; do
-  value="${!var_name:-}"
-  if [[ -z "$value" ]]; then
-    echo "ERROR: missing variable in $ENV_FILE: $var_name"
-    exit 1
-  fi
+  declare "${var_name}=$(require_env_var "${var_name}" "${ENV_FILE}")"
 done
 
 guard_path() {
@@ -40,7 +58,7 @@ run_cmd() {
   if [[ "$DRY_RUN" == "--dry-run" ]]; then
     echo "[dry-run] $*"
   else
-    eval "$*"
+    "$@"
   fi
 }
 
@@ -86,12 +104,12 @@ ensure_dir "$VOL_MATOMO_DATA/tmp/templates_c"
 
 if command -v docker >/dev/null 2>&1; then
   echo "Applying ownership via ephemeral containers (no sudo required)"
-  run_cmd "docker run --rm -v \"$VOL_MATOMO_DATA:/target\" alpine:3.20 sh -c 'chown -R 33:33 /target && chmod -R u=rwX,go=rX /target/tmp'"
-  run_cmd "docker run --rm -v \"$VOL_DB_PATH:/target\" alpine:3.20 sh -c 'chown -R 999:999 /target && chmod -R u=rwX,g=rX,o= /target'"
+  run_cmd docker run --rm -v "${VOL_MATOMO_DATA}:/target" alpine:3.20 sh -c 'chown -R 33:33 /target && chmod -R u=rwX,go=rX /target/tmp'
+  run_cmd docker run --rm -v "${VOL_DB_PATH}:/target" alpine:3.20 sh -c 'chown -R 999:999 /target && chmod -R u=rwX,g=rX,o= /target'
 else
   echo "WARNING: docker is not available, skipping ownership fix"
 fi
 
-run_cmd "chmod 750 \"$BACKUP_DIR\""
+run_cmd chmod 750 "$BACKUP_DIR"
 
 echo "Volume initialization completed"

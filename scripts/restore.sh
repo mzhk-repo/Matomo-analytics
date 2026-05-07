@@ -1,12 +1,22 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ENV_FILE="${ENV_FILE:-.env}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+# shellcheck source=scripts/lib/autonomous-env.sh
+# shellcheck disable=SC1091
+. "${SCRIPT_DIR}/lib/autonomous-env.sh"
+# shellcheck source=scripts/lib/docker-runtime.sh
+# shellcheck disable=SC1091
+. "${SCRIPT_DIR}/lib/docker-runtime.sh"
+
+ENVIRONMENT_ARG=""
 FORCE=false
 BACKUP_FILE=""
 
 usage() {
-  echo "Usage: $0 [--force] <backup-file.sql.gz|backup-file.sql>"
+  echo "Usage: $0 [--env dev|prod] [--force] <backup-file.sql.gz|backup-file.sql>"
 }
 
 require_command() {
@@ -17,10 +27,25 @@ require_command() {
   fi
 }
 
-for arg in "$@"; do
-  case "$arg" in
+while [[ "$#" -gt 0 ]]; do
+  case "$1" in
     --force)
       FORCE=true
+      ;;
+    --env)
+      shift
+      [[ "$#" -gt 0 ]] || {
+        echo "ERROR: --env requires value"
+        usage
+        exit 1
+      }
+      ENVIRONMENT_ARG="$1"
+      ;;
+    --env=*)
+      ENVIRONMENT_ARG="${1#--env=}"
+      ;;
+    dev|development|prod|production)
+      ENVIRONMENT_ARG="$1"
       ;;
     -h|--help)
       usage
@@ -28,23 +53,19 @@ for arg in "$@"; do
       ;;
     *)
       if [[ -z "$BACKUP_FILE" ]]; then
-        BACKUP_FILE="$arg"
+        BACKUP_FILE="$1"
       else
-        echo "ERROR: unexpected argument: $arg"
+        echo "ERROR: unexpected argument: $1"
         usage
         exit 1
       fi
       ;;
   esac
+  shift
 done
 
 if [[ -z "$BACKUP_FILE" ]]; then
   usage
-  exit 1
-fi
-
-if [[ ! -f "$ENV_FILE" ]]; then
-  echo "ERROR: env file not found: $ENV_FILE"
   exit 1
 fi
 
@@ -53,8 +74,11 @@ if [[ ! -f "$BACKUP_FILE" ]]; then
   exit 1
 fi
 
-# shellcheck source=/dev/null
-source "$ENV_FILE"
+load_autonomous_env "${ROOT_DIR}" "${ENVIRONMENT_ARG}"
+cd "${ROOT_DIR}"
+
+DB_NAME="${DB_NAME:-}"
+DB_ROOT_PASS="${DB_ROOT_PASS:-}"
 
 required_vars=(
   DB_NAME
@@ -71,9 +95,8 @@ done
 require_command docker
 require_command gzip
 
-if ! docker compose ps matomo-db >/dev/null 2>&1; then
-  echo "ERROR: could not access service 'matomo-db' via docker compose"
-  echo "Hint: run this script from repository root where docker-compose.yaml and .env are available"
+if ! docker_runtime_service_accessible matomo-db; then
+  echo "ERROR: could not access service 'matomo-db' (runtime=${DOCKER_RUNTIME_MODE}, stack=${STACK_NAME})"
   exit 1
 fi
 
@@ -91,21 +114,21 @@ if [[ "$FORCE" != true ]]; then
   fi
 fi
 
-echo "[restore] ENV loaded from: $ENV_FILE"
+echo "[restore] ENV loaded from: env.${AUTONOMOUS_ENVIRONMENT}.enc"
 echo "[restore] source backup: $BACKUP_FILE"
 echo "[restore] target database: $DB_NAME"
 
 echo "[restore] importing dump..."
 if [[ "$BACKUP_FILE" == *.sql.gz ]]; then
-  gzip -dc "$BACKUP_FILE" | docker compose exec -T -e MYSQL_PWD="$DB_ROOT_PASS" matomo-db mariadb -uroot "$DB_NAME"
+  gzip -dc "$BACKUP_FILE" | docker_runtime_db_import "$DB_NAME" "${DB_ROOT_PASS:-}"
 elif [[ "$BACKUP_FILE" == *.sql ]]; then
-  cat "$BACKUP_FILE" | docker compose exec -T -e MYSQL_PWD="$DB_ROOT_PASS" matomo-db mariadb -uroot "$DB_NAME"
+  docker_runtime_db_import "$DB_NAME" "${DB_ROOT_PASS:-}" < "$BACKUP_FILE"
 else
   echo "ERROR: unsupported backup format. Use .sql or .sql.gz"
   exit 1
 fi
 
 echo "[restore] running post-restore sanity query..."
-docker compose exec -T -e MYSQL_PWD="$DB_ROOT_PASS" matomo-db mariadb -uroot -e "USE ${DB_NAME}; SHOW TABLES;" >/dev/null
+docker_runtime_db_sanity "$DB_NAME" "${DB_ROOT_PASS:-}"
 
 echo "[restore] completed successfully"

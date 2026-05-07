@@ -1,14 +1,24 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ENV_FILE="${ENV_FILE:-.env}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+# shellcheck source=scripts/lib/autonomous-env.sh
+# shellcheck disable=SC1091
+. "${SCRIPT_DIR}/lib/autonomous-env.sh"
+# shellcheck source=scripts/lib/docker-runtime.sh
+# shellcheck disable=SC1091
+. "${SCRIPT_DIR}/lib/docker-runtime.sh"
+
 DRY_RUN=false
+ENVIRONMENT_ARG=""
 backup_status="0"
 run_timestamp="$(date +%s)"
 success_timestamp="0"
 
 usage() {
-  echo "Usage: $0 [--dry-run]"
+  echo "Usage: $0 [--env dev|prod] [--dry-run]"
 }
 
 require_command() {
@@ -27,26 +37,44 @@ run_cmd() {
   "$@"
 }
 
-for arg in "$@"; do
-  case "$arg" in
+while [[ "$#" -gt 0 ]]; do
+  case "$1" in
     --dry-run)
       DRY_RUN=true
       ;;
+    --env)
+      shift
+      [[ "$#" -gt 0 ]] || {
+        echo "ERROR: --env requires value"
+        usage
+        exit 1
+      }
+      ENVIRONMENT_ARG="$1"
+      ;;
+    --env=*)
+      ENVIRONMENT_ARG="${1#--env=}"
+      ;;
+    dev|development|prod|production)
+      ENVIRONMENT_ARG="$1"
+      ;;
     *)
-      echo "ERROR: unknown argument: $arg"
+      echo "ERROR: unknown argument: $1"
       usage
       exit 1
       ;;
   esac
+  shift
 done
 
-if [[ ! -f "$ENV_FILE" ]]; then
-  echo "ERROR: env file not found: $ENV_FILE"
-  exit 1
-fi
+load_autonomous_env "${ROOT_DIR}" "${ENVIRONMENT_ARG}"
+cd "${ROOT_DIR}"
 
-# shellcheck source=/dev/null
-source "$ENV_FILE"
+DB_ROOT_PASS="${DB_ROOT_PASS:-}"
+DB_NAME="${DB_NAME:-}"
+BACKUP_DIR="${BACKUP_DIR:-}"
+BACKUP_RETENTION_DAYS="${BACKUP_RETENTION_DAYS:-}"
+RCLONE_REMOTE="${RCLONE_REMOTE:-}"
+RCLONE_DEST_PATH="${RCLONE_DEST_PATH:-}"
 
 NODE_EXPORTER_TEXTFILE_DIR="${NODE_EXPORTER_TEXTFILE_DIR:-./.data/node-exporter-textfile}"
 BACKUP_METRICS_FILE="${BACKUP_METRICS_FILE:-matomo_backup.prom}"
@@ -148,9 +176,8 @@ on_exit() {
 }
 trap on_exit EXIT
 
-if ! docker compose ps matomo-db >/dev/null 2>&1; then
-  echo "ERROR: could not access service 'matomo-db' via docker compose"
-  echo "Hint: run this script from repository root where docker-compose.yaml and .env are available"
+if ! docker_runtime_service_accessible matomo-db; then
+  echo "ERROR: could not access service 'matomo-db' (runtime=${DOCKER_RUNTIME_MODE}, stack=${STACK_NAME})"
   exit 1
 fi
 
@@ -159,7 +186,7 @@ backup_file="${BACKUP_DIR}/matomo_${DB_NAME}_${timestamp}.sql.gz"
 
 run_cmd mkdir -p "$BACKUP_DIR"
 
-echo "[backup] ENV loaded from: $ENV_FILE"
+echo "[backup] ENV loaded from: env.${AUTONOMOUS_ENVIRONMENT}.enc"
 echo "[backup] target file: $backup_file"
 echo "[backup] retention days: $BACKUP_RETENTION_DAYS"
 echo "[backup] remote: ${RCLONE_REMOTE}:${RCLONE_DEST_PATH}"
@@ -167,7 +194,7 @@ echo "[backup] metrics file: ${TEXTFILE_DIR_ABS}/${BACKUP_METRICS_FILE}"
 
 if [[ "$DRY_RUN" == true ]]; then
   echo "[backup] DRY RUN: no data dump/upload/delete will be executed"
-  echo "[backup][dry-run] docker compose exec -T -e MYSQL_PWD=*** matomo-db mariadb-dump -uroot --single-transaction --quick --lock-tables=false \"$DB_NAME\" | gzip -c > \"$backup_file\""
+  echo "[backup][dry-run] docker_runtime_db_dump \"$DB_NAME\" | gzip -c > \"$backup_file\""
   echo "[backup][dry-run] rclone copy \"$backup_file\" \"${RCLONE_REMOTE}:${RCLONE_DEST_PATH}/\""
   echo "[backup][dry-run] find \"$BACKUP_DIR\" -maxdepth 1 -type f -name \"matomo_${DB_NAME}_*.sql.gz\" -mtime +$BACKUP_RETENTION_DAYS -delete"
   backup_status="1"
@@ -176,9 +203,7 @@ if [[ "$DRY_RUN" == true ]]; then
 fi
 
 echo "[backup] creating database dump..."
-if ! docker compose exec -T -e MYSQL_PWD="$DB_ROOT_PASS" matomo-db \
-  mariadb-dump -uroot --single-transaction --quick --lock-tables=false "$DB_NAME" \
-  | gzip -c > "$backup_file"; then
+if ! docker_runtime_db_dump "$DB_NAME" "${DB_ROOT_PASS:-}" | gzip -c > "$backup_file"; then
   echo "ERROR: database dump failed"
   rm -f "$backup_file"
   exit 1
