@@ -50,3 +50,9 @@
 - **Fix:** `scripts/deploy-orchestrator-swarm.sh` після старту `matomo-app`/`matomo-db` повторно запускає `init-volumes.sh --matomo-only`, щоб виправити файли, які офіційний Matomo image створив у `/var/www/html` уже після pre-deploy bootstrap.
 - **Context:** Після успішного deploy вебсторінка падала з `Matomo couldn't write to some directories (running as user 'www-data')`.
 - **Verification:** `bash -n` і `shellcheck` для `scripts/init-volumes.sh`/`scripts/deploy-orchestrator-swarm.sh` пройшли успішно; `scripts/init-volumes.sh --env-file .env.example --matomo-only --dry-run` показав тільки Matomo writable directory bootstrap без DB/backup змін.
+
+## 2026-05-07 — Swarm Matomo database env mapping fixed
+
+- **Fix:** `docker-compose.swarm.yml` тепер після читання `app_env_payload` мапить `DB_*` у змінні офіційного Matomo image: `MATOMO_DATABASE_HOST=matomo-db`, `MATOMO_DATABASE_ADAPTER=mysql`, `MATOMO_DATABASE_TABLES_PREFIX`, `MATOMO_DATABASE_USERNAME`, `MATOMO_DATABASE_PASSWORD`, `MATOMO_DATABASE_DBNAME`.
+- **Context:** У Swarm override `environment` скидається, тому Matomo UI bootstrap не бачив DB connection env і ручне введення `127.0.0.1` завершувалось `SQLSTATE[HY000] [2002] Connection refused`.
+- **Verification:** `docker compose --env-file .env.example -f docker-compose.yml -f docker-compose.swarm.yml config` підтвердив runtime `MATOMO_DATABASE_*` exports без підстановки `DB_PASS` у manifest; `bash -n` і `shellcheck` для deploy/init scripts пройшли успішно.
