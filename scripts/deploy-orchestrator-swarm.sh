@@ -152,6 +152,9 @@ run_post_deploy_hooks() {
   wait_for_swarm_container matomo-app
   wait_for_swarm_container matomo-db
 
+  log "Re-applying Matomo writable directory permissions"
+  ORCHESTRATOR_ENV_FILE="${env_file}" bash "${SCRIPT_DIR}/init-volumes.sh" --matomo-only
+
   log "Applying Matomo runtime config"
   ORCHESTRATOR_ENV_FILE="${env_file}" \
     DOCKER_RUNTIME_MODE=swarm \

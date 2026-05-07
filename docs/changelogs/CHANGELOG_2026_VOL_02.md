@@ -36,3 +36,17 @@
 - **Change:** `scripts/deploy-orchestrator-swarm.sh` отримав глобальний `cleanup` з `trap cleanup EXIT`, який прибирає активні тимчасові raw/deploy manifests і runtime render env-файл незалежно від коду виходу.
 - **Change:** Cleanup додатково видаляє stale manifests у корені проєкту за шаблонами поточного `STACK_NAME`: `.${STACK_NAME}.stack.raw.*.yml` і `.${STACK_NAME}.stack.deploy.*.yml`.
 - **Verification:** `bash -n`, `shellcheck` і `ORCHESTRATOR_MODE=noop scripts/deploy-orchestrator-swarm.sh` пройшли успішно; smoke-перевірка з тестовими `.matomo.stack.*.yml` підтвердила видалення stale manifests через `trap cleanup EXIT`.
+
+## 2026-05-07 — init-volumes backup directory permissions fixed
+
+- **Fix:** `scripts/init-volumes.sh` тепер ініціалізує `BACKUP_DIR` окремим кроком і намагається застосувати `chown/chmod 750` через ephemeral Docker container з `BACKUP_UID/BACKUP_GID` fallback на поточного користувача.
+- **Fix:** Нормалізація прав `BACKUP_DIR` стала fail-soft: якщо host або helper container повертає `Operation not permitted`, скрипт друкує warning і продовжує deploy, бо директорія вже існує.
+- **Context:** Swarm deploy падав на host-side `chmod 750 "$BACKUP_DIR"` для `/data/backup/matomo` з `Operation not permitted`; тепер deploy-adjacent hook не блокує деплой через неможливість змінити mode backup-директорії.
+- **Verification:** `bash -n` і `shellcheck` для `scripts/init-volumes.sh`/`scripts/deploy-orchestrator-swarm.sh` пройшли успішно; smoke-test з docker-stub, який повертає `Operation not permitted` для `BACKUP_DIR`, завершився `exit 0` і створив backup-директорію.
+
+## 2026-05-07 — Matomo writable volume permissions normalized after deploy
+
+- **Fix:** `scripts/init-volumes.sh` отримав режим `--matomo-only`, який створює `tmp/assets`, `tmp/cache`, `tmp/logs`, `tmp/tcpdf`, `tmp/templates_c`, виставляє `www-data:www-data` для всього `VOL_MATOMO_DATA` і нормалізує `tmp` directories/files до `755/644`.
+- **Fix:** `scripts/deploy-orchestrator-swarm.sh` після старту `matomo-app`/`matomo-db` повторно запускає `init-volumes.sh --matomo-only`, щоб виправити файли, які офіційний Matomo image створив у `/var/www/html` уже після pre-deploy bootstrap.
+- **Context:** Після успішного deploy вебсторінка падала з `Matomo couldn't write to some directories (running as user 'www-data')`.
+- **Verification:** `bash -n` і `shellcheck` для `scripts/init-volumes.sh`/`scripts/deploy-orchestrator-swarm.sh` пройшли успішно; `scripts/init-volumes.sh --env-file .env.example --matomo-only --dry-run` показав тільки Matomo writable directory bootstrap без DB/backup змін.
