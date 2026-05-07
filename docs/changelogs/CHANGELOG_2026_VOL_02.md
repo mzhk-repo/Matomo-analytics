@@ -24,3 +24,15 @@
 - **Root cause:** Ручний запуск `scripts/deploy-orchestrator-swarm.sh` без `INFRA_REPO_PATH` пропускав Ansible secrets refresh. `docker stack deploy` перезапускав сервіси зі старим external secret `app_env_payload`, тому checksum у `apply-matomo-config.sh` лишався відмінним навіть після `service update --force`.
 - **Fix:** `scripts/deploy-orchestrator-swarm.sh` тепер сам створює checksum-versioned Docker secrets з розшифрованого env-файлу (`app_env_payload`, `matomo_api_token`, `db_password`, `db_root_password`) і рендерить Swarm manifest через тимчасовий env-файл з актуальними secret names.
 - **Verification:** Повторено ручну команду з `docs/scripts_runbook.md`: deploy завершився успішно, `app_env_payload checksum synchronized after restart`, Matomo config застосовано. Повторний прямий `apply-matomo-config.sh` із SOPS temp env показав `app_env_payload checksum is up to date`.
+
+## 2026-05-07 — Swarm versioned secrets renderer extracted
+
+- **Change:** Додано `scripts/render-versioned-env-secret.sh` за DSpace-патерном: скрипт створює або перевикористовує immutable Docker secrets для `app_env_payload`, `matomo_api_token`, `db_password`, `db_root_password` і записує generated `MATOMO_*_SECRET_NAME` у render env-файл.
+- **Change:** `scripts/deploy-orchestrator-swarm.sh` більше не містить inline-логіку створення versioned secrets; Swarm deploy викликає renderer перед `docker compose config`.
+- **Verification:** `bash -n` і `shellcheck` для змінених shell-скриптів пройшли успішно. Ізольований прогін renderer з тимчасовим `docker` stub на `.env.example` підтвердив 12-символьні SHA256 hash suffix для всіх чотирьох secrets і запис generated names у render env-файл; `docker compose config` підтвердив підстановку versioned external secret names у Swarm manifest.
+
+## 2026-05-07 — Swarm deploy temp manifests cleanup
+
+- **Change:** `scripts/deploy-orchestrator-swarm.sh` отримав глобальний `cleanup` з `trap cleanup EXIT`, який прибирає активні тимчасові raw/deploy manifests і runtime render env-файл незалежно від коду виходу.
+- **Change:** Cleanup додатково видаляє stale manifests у корені проєкту за шаблонами поточного `STACK_NAME`: `.${STACK_NAME}.stack.raw.*.yml` і `.${STACK_NAME}.stack.deploy.*.yml`.
+- **Verification:** `bash -n`, `shellcheck` і `ORCHESTRATOR_MODE=noop scripts/deploy-orchestrator-swarm.sh` пройшли успішно; smoke-перевірка з тестовими `.matomo.stack.*.yml` підтвердила видалення stale manifests через `trap cleanup EXIT`.
