@@ -56,3 +56,15 @@
 - **Fix:** `docker-compose.swarm.yml` тепер після читання `app_env_payload` мапить `DB_*` у змінні офіційного Matomo image: `MATOMO_DATABASE_HOST=matomo-db`, `MATOMO_DATABASE_ADAPTER=mysql`, `MATOMO_DATABASE_TABLES_PREFIX`, `MATOMO_DATABASE_USERNAME`, `MATOMO_DATABASE_PASSWORD`, `MATOMO_DATABASE_DBNAME`.
 - **Context:** У Swarm override `environment` скидається, тому Matomo UI bootstrap не бачив DB connection env і ручне введення `127.0.0.1` завершувалось `SQLSTATE[HY000] [2002] Connection refused`.
 - **Verification:** `docker compose --env-file .env.example -f docker-compose.yml -f docker-compose.swarm.yml config` підтвердив runtime `MATOMO_DATABASE_*` exports без підстановки `DB_PASS` у manifest; `bash -n` і `shellcheck` для deploy/init scripts пройшли успішно.
+
+## 2026-05-07 — Swarm MariaDB app user password sync
+
+- **Fix:** `scripts/deploy-orchestrator-swarm.sh` після старту `matomo-db` ідемпотентно синхронізує MariaDB application user з поточними Swarm secrets: `CREATE USER IF NOT EXISTS`, `ALTER USER`, `GRANT` для `DB_USER` на `DB_NAME`.
+- **Context:** Після виправлення DB host Matomo bootstrap доходив до MariaDB, але отримував `Access denied`, бо існуючий MariaDB datadir міг бути ініціалізований старим `DB_PASS`; `MARIADB_PASSWORD_FILE` не оновлює пароль користувача на вже створеному volume.
+- **Verification:** `bash -n` і `shellcheck` для deploy/init scripts пройшли успішно; `docker compose --env-file .env.example -f docker-compose.yml -f docker-compose.swarm.yml config` рендериться без помилок.
+
+## 2026-05-07 — backup cloud retention split from local retention
+
+- **Change:** `scripts/backup.sh` отримав окремий `BACKUP_CLOUD_RETENTION_DAYS` для pruning remote backups через `rclone delete --min-age`; якщо змінна відсутня у старому env, використовується fallback на `BACKUP_RETENTION_DAYS`.
+- **Change:** `.env.example` доповнено `BACKUP_CLOUD_RETENTION_DAYS=30` у backup-блоці.
+- **Verification:** `bash -n scripts/backup.sh` і `shellcheck scripts/backup.sh` пройшли успішно; реальний backup/upload/remote delete не запускався.

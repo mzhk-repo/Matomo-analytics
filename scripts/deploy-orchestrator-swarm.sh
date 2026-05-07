@@ -146,11 +146,54 @@ wait_for_swarm_container() {
   exit 1
 }
 
+sync_database_user_credentials() {
+  local db_container_id
+
+  db_container_id="$(docker ps \
+    --filter "label=com.docker.swarm.service.name=${STACK_NAME}_matomo-db" \
+    --filter "status=running" \
+    --format '{{.ID}}' | head -n1)"
+  [[ -n "${db_container_id}" ]] || {
+    log "ERROR: running container not found for Swarm service ${STACK_NAME}_matomo-db"
+    exit 1
+  }
+
+  log "Synchronizing MariaDB application user credentials"
+  docker exec -i "${db_container_id}" sh -se <<'SYNC_DB_USER'
+db_name="${MARIADB_DATABASE:?MARIADB_DATABASE is required}"
+db_user="${MARIADB_USER:?MARIADB_USER is required}"
+db_pass="$(cat /run/secrets/db_password)"
+root_pass="$(cat /run/secrets/db_root_password)"
+
+sql_string() {
+  printf "%s" "$1" | sed "s/'/''/g"
+}
+
+sql_ident() {
+  printf "%s" "$1" | sed 's/`/``/g'
+}
+
+db_name_escaped="$(sql_ident "$db_name")"
+db_user_escaped="$(sql_string "$db_user")"
+db_pass_escaped="$(sql_string "$db_pass")"
+
+MYSQL_PWD="$root_pass" mariadb -uroot <<SQL
+CREATE DATABASE IF NOT EXISTS \`${db_name_escaped}\`;
+CREATE USER IF NOT EXISTS '${db_user_escaped}'@'%' IDENTIFIED BY '${db_pass_escaped}';
+ALTER USER '${db_user_escaped}'@'%' IDENTIFIED BY '${db_pass_escaped}';
+GRANT ALL PRIVILEGES ON \`${db_name_escaped}\`.* TO '${db_user_escaped}'@'%';
+FLUSH PRIVILEGES;
+SQL
+SYNC_DB_USER
+}
+
 run_post_deploy_hooks() {
   local env_file="$1"
 
   wait_for_swarm_container matomo-app
   wait_for_swarm_container matomo-db
+
+  sync_database_user_credentials
 
   log "Re-applying Matomo writable directory permissions"
   ORCHESTRATOR_ENV_FILE="${env_file}" bash "${SCRIPT_DIR}/init-volumes.sh" --matomo-only
