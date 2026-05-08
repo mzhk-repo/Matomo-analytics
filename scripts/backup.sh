@@ -16,6 +16,7 @@ ENVIRONMENT_ARG=""
 backup_status="0"
 run_timestamp="$(date +%s)"
 success_timestamp="0"
+emit_metrics_on_exit="1"
 
 usage() {
   echo "Usage: $0 [--env dev|prod] [--dry-run]"
@@ -173,6 +174,9 @@ EOF
 
 on_exit() {
   local exit_code=$?
+  if [[ "$emit_metrics_on_exit" != "1" ]]; then
+    exit "$exit_code"
+  fi
   if [[ "$exit_code" -eq 0 && "$backup_status" -ne 1 ]]; then
     backup_status="1"
     success_timestamp="$(date +%s)"
@@ -201,12 +205,12 @@ echo "[backup] metrics file: ${TEXTFILE_DIR_ABS}/${BACKUP_METRICS_FILE}"
 
 if [[ "$DRY_RUN" == true ]]; then
   echo "[backup] DRY RUN: no data dump/upload/delete will be executed"
+  echo "[backup] DRY RUN: backup freshness metrics will not be updated"
   echo "[backup][dry-run] docker_runtime_db_dump \"$DB_NAME\" | gzip -c > \"$backup_file\""
   echo "[backup][dry-run] rclone copy \"$backup_file\" \"${RCLONE_REMOTE}:${RCLONE_DEST_PATH}/\""
   echo "[backup][dry-run] rclone delete \"${RCLONE_REMOTE}:${RCLONE_DEST_PATH}/\" --include \"matomo_${DB_NAME}_*.sql.gz\" --min-age \"${BACKUP_CLOUD_RETENTION_DAYS}d\""
   echo "[backup][dry-run] find \"$BACKUP_DIR\" -maxdepth 1 -type f -name \"matomo_${DB_NAME}_*.sql.gz\" -mtime +$BACKUP_RETENTION_DAYS -delete"
-  backup_status="1"
-  success_timestamp="$(date +%s)"
+  emit_metrics_on_exit="0"
   exit 0
 fi
 
