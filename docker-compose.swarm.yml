@@ -59,6 +59,12 @@ services:
         if [ -f /run/secrets/matomo_api_token ]; then
           export MATOMO_API_TOKEN="$(cat /run/secrets/matomo_api_token)"
         fi
+        export MATOMO_DATABASE_HOST="$${MATOMO_DATABASE_HOST:-matomo-db}"
+        export MATOMO_DATABASE_ADAPTER="$${MATOMO_DATABASE_ADAPTER:-mysql}"
+        export MATOMO_DATABASE_TABLES_PREFIX="$${MATOMO_DATABASE_TABLES_PREFIX:-$${DB_PREFIX}}"
+        export MATOMO_DATABASE_USERNAME="$${MATOMO_DATABASE_USERNAME:-$${DB_USER}}"
+        export MATOMO_DATABASE_PASSWORD="$${MATOMO_DATABASE_PASSWORD:-$${DB_PASS}}"
+        export MATOMO_DATABASE_DBNAME="$${MATOMO_DATABASE_DBNAME:-$${DB_NAME}}"
         exec /entrypoint.sh apache2-foreground
     deploy:
       replicas: 1
@@ -97,6 +103,12 @@ services:
         if [ -f /run/secrets/matomo_api_token ]; then
           export MATOMO_API_TOKEN="$(cat /run/secrets/matomo_api_token)"
         fi
+        export MATOMO_DATABASE_HOST="$${MATOMO_DATABASE_HOST:-matomo-db}"
+        export MATOMO_DATABASE_ADAPTER="$${MATOMO_DATABASE_ADAPTER:-mysql}"
+        export MATOMO_DATABASE_TABLES_PREFIX="$${MATOMO_DATABASE_TABLES_PREFIX:-$${DB_PREFIX}}"
+        export MATOMO_DATABASE_USERNAME="$${MATOMO_DATABASE_USERNAME:-$${DB_USER}}"
+        export MATOMO_DATABASE_PASSWORD="$${MATOMO_DATABASE_PASSWORD:-$${DB_PASS}}"
+        export MATOMO_DATABASE_DBNAME="$${MATOMO_DATABASE_DBNAME:-$${DB_NAME}}"
         exec /entrypoint.sh /bin/sh -c 'while true; do php /var/www/html/console core:archive --url="https://${MATOMO_HOST}"; sleep 3600; done'
     deploy:
       replicas: 1

@@ -16,6 +16,7 @@ ENVIRONMENT_ARG=""
 backup_status="0"
 run_timestamp="$(date +%s)"
 success_timestamp="0"
+emit_metrics_on_exit="1"
 
 usage() {
   echo "Usage: $0 [--env dev|prod] [--dry-run]"
@@ -73,6 +74,7 @@ DB_ROOT_PASS="${DB_ROOT_PASS:-}"
 DB_NAME="${DB_NAME:-}"
 BACKUP_DIR="${BACKUP_DIR:-}"
 BACKUP_RETENTION_DAYS="${BACKUP_RETENTION_DAYS:-}"
+BACKUP_CLOUD_RETENTION_DAYS="${BACKUP_CLOUD_RETENTION_DAYS:-${BACKUP_RETENTION_DAYS:-}}"
 RCLONE_REMOTE="${RCLONE_REMOTE:-}"
 RCLONE_DEST_PATH="${RCLONE_DEST_PATH:-}"
 
@@ -99,6 +101,11 @@ done
 
 if ! [[ "$BACKUP_RETENTION_DAYS" =~ ^[0-9]+$ ]] || [[ "$BACKUP_RETENTION_DAYS" -lt 1 ]]; then
   echo "ERROR: BACKUP_RETENTION_DAYS must be a positive integer"
+  exit 1
+fi
+
+if ! [[ "$BACKUP_CLOUD_RETENTION_DAYS" =~ ^[0-9]+$ ]] || [[ "$BACKUP_CLOUD_RETENTION_DAYS" -lt 1 ]]; then
+  echo "ERROR: BACKUP_CLOUD_RETENTION_DAYS must be a positive integer"
   exit 1
 fi
 
@@ -167,6 +174,9 @@ EOF
 
 on_exit() {
   local exit_code=$?
+  if [[ "$emit_metrics_on_exit" != "1" ]]; then
+    exit "$exit_code"
+  fi
   if [[ "$exit_code" -eq 0 && "$backup_status" -ne 1 ]]; then
     backup_status="1"
     success_timestamp="$(date +%s)"
@@ -188,17 +198,19 @@ run_cmd mkdir -p "$BACKUP_DIR"
 
 echo "[backup] ENV loaded from: env.${AUTONOMOUS_ENVIRONMENT}.enc"
 echo "[backup] target file: $backup_file"
-echo "[backup] retention days: $BACKUP_RETENTION_DAYS"
+echo "[backup] local retention days: $BACKUP_RETENTION_DAYS"
+echo "[backup] cloud retention days: $BACKUP_CLOUD_RETENTION_DAYS"
 echo "[backup] remote: ${RCLONE_REMOTE}:${RCLONE_DEST_PATH}"
 echo "[backup] metrics file: ${TEXTFILE_DIR_ABS}/${BACKUP_METRICS_FILE}"
 
 if [[ "$DRY_RUN" == true ]]; then
   echo "[backup] DRY RUN: no data dump/upload/delete will be executed"
+  echo "[backup] DRY RUN: backup freshness metrics will not be updated"
   echo "[backup][dry-run] docker_runtime_db_dump \"$DB_NAME\" | gzip -c > \"$backup_file\""
   echo "[backup][dry-run] rclone copy \"$backup_file\" \"${RCLONE_REMOTE}:${RCLONE_DEST_PATH}/\""
+  echo "[backup][dry-run] rclone delete \"${RCLONE_REMOTE}:${RCLONE_DEST_PATH}/\" --include \"matomo_${DB_NAME}_*.sql.gz\" --min-age \"${BACKUP_CLOUD_RETENTION_DAYS}d\""
   echo "[backup][dry-run] find \"$BACKUP_DIR\" -maxdepth 1 -type f -name \"matomo_${DB_NAME}_*.sql.gz\" -mtime +$BACKUP_RETENTION_DAYS -delete"
-  backup_status="1"
-  success_timestamp="$(date +%s)"
+  emit_metrics_on_exit="0"
   exit 0
 fi
 
@@ -211,6 +223,11 @@ fi
 
 echo "[backup] uploading to remote..."
 rclone copy "$backup_file" "${RCLONE_REMOTE}:${RCLONE_DEST_PATH}/"
+
+echo "[backup] pruning cloud backups older than ${BACKUP_CLOUD_RETENTION_DAYS} days..."
+rclone delete "${RCLONE_REMOTE}:${RCLONE_DEST_PATH}/" \
+  --include "matomo_${DB_NAME}_*.sql.gz" \
+  --min-age "${BACKUP_CLOUD_RETENTION_DAYS}d"
 
 echo "[backup] pruning local backups older than ${BACKUP_RETENTION_DAYS} days..."
 find "$BACKUP_DIR" -maxdepth 1 -type f -name "matomo_${DB_NAME}_*.sql.gz" -mtime +"$BACKUP_RETENTION_DAYS" -print -delete

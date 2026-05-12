@@ -11,9 +11,24 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 MODE="${ORCHESTRATOR_MODE:-noop}"
 STACK_NAME="${STACK_NAME:-matomo}"
 ENV_FILE="${ORCHESTRATOR_ENV_FILE:-/tmp/env.decrypted}"
+RAW_MANIFEST=""
+DEPLOY_MANIFEST=""
+RENDER_ENV_FILE=""
 
 log() {
   printf '[deploy-orchestrator] %s\n' "$*"
+}
+
+cleanup() {
+  rm -f \
+    "${RAW_MANIFEST:-}" \
+    "${DEPLOY_MANIFEST:-}" \
+    "${RENDER_ENV_FILE:-}"
+
+  find "${PROJECT_ROOT}" -maxdepth 1 -type f \
+    \( -name ".${STACK_NAME}.stack.raw.*.yml" \
+      -o -name ".${STACK_NAME}.stack.deploy.*.yml" \) \
+    -delete
 }
 
 detect_compose_file() {
@@ -96,89 +111,18 @@ run_deploy_adjacent_hooks() {
   ORCHESTRATOR_ENV_FILE="${env_file}" bash "${SCRIPT_DIR}/init-volumes.sh"
 }
 
-secret_exists() {
-  local secret_name="$1"
-  docker secret inspect "${secret_name}" >/dev/null 2>&1
-}
-
-create_secret_from_file_if_missing() {
-  local secret_name="$1"
-  local source_file="$2"
-
-  if secret_exists "${secret_name}"; then
-    log "Swarm secret already exists: ${secret_name}"
-    return 0
-  fi
-
-  log "Creating Swarm secret: ${secret_name}"
-  docker secret create "${secret_name}" "${source_file}" >/dev/null
-}
-
-create_secret_from_value_if_missing() {
-  local secret_name="$1"
-  local value="$2"
-
-  if secret_exists "${secret_name}"; then
-    log "Swarm secret already exists: ${secret_name}"
-    return 0
-  fi
-
-  log "Creating Swarm secret: ${secret_name}"
-  printf '%s' "${value}" | docker secret create "${secret_name}" - >/dev/null
-}
-
-secret_name_for_checksum() {
-  local logical_name="$1"
-  local checksum="$2"
-  local environment_label
-
-  case "${ENVIRONMENT_NAME:-}" in
-    development|dev) environment_label="dev" ;;
-    production|prod) environment_label="prod" ;;
-    *) environment_label="env" ;;
-  esac
-
-  printf '%s_%s_%s_%s\n' "${STACK_NAME}" "${logical_name}" "${environment_label}" "${checksum:0:12}"
-}
-
-value_checksum() {
-  local value="$1"
-  printf '%s' "${value}" | sha256sum | awk '{print $1}'
-}
-
 prepare_swarm_secrets() {
   local env_file="$1"
   local render_env_file="$2"
-  local app_env_checksum app_env_secret_name
-  local api_token db_pass db_root_pass
-  local api_token_secret_name db_pass_secret_name db_root_pass_secret_name
-
-  app_env_checksum="$(dotenv_checksum_file "${env_file}")"
-  app_env_secret_name="$(secret_name_for_checksum "app_env_payload" "${app_env_checksum}")"
-  create_secret_from_file_if_missing "${app_env_secret_name}" "${env_file}"
-
-  api_token="$(require_env_var MATOMO_API_TOKEN "${env_file}")"
-  db_pass="$(require_env_var DB_PASS "${env_file}")"
-  db_root_pass="$(require_env_var DB_ROOT_PASS "${env_file}")"
-
-  api_token_secret_name="$(secret_name_for_checksum "api_token" "$(value_checksum "${api_token}")")"
-  db_pass_secret_name="$(secret_name_for_checksum "db_password" "$(value_checksum "${db_pass}")")"
-  db_root_pass_secret_name="$(secret_name_for_checksum "db_root_password" "$(value_checksum "${db_root_pass}")")"
-
-  create_secret_from_value_if_missing "${api_token_secret_name}" "${api_token}"
-  create_secret_from_value_if_missing "${db_pass_secret_name}" "${db_pass}"
-  create_secret_from_value_if_missing "${db_root_pass_secret_name}" "${db_root_pass}"
 
   cp "${env_file}" "${render_env_file}"
-  {
-    printf '\n'
-    printf 'MATOMO_APP_ENV_SECRET_NAME=%s\n' "${app_env_secret_name}"
-    printf 'MATOMO_API_TOKEN_SECRET_NAME=%s\n' "${api_token_secret_name}"
-    printf 'MATOMO_DB_PASSWORD_SECRET_NAME=%s\n' "${db_pass_secret_name}"
-    printf 'MATOMO_DB_ROOT_PASSWORD_SECRET_NAME=%s\n' "${db_root_pass_secret_name}"
-  } >> "${render_env_file}"
+  STACK_NAME="${STACK_NAME}" \
+    ORCHESTRATOR_ENV_FILE="${env_file}" \
+    bash "${SCRIPT_DIR}/render-versioned-env-secret.sh" \
+      --env-file "${env_file}" \
+      --write-env-file "${render_env_file}" >/dev/null
 
-  log "Swarm secrets prepared from env checksum (${app_env_checksum:0:12})"
+  log "Swarm secrets prepared with versioned secret names"
 }
 
 wait_for_swarm_container() {
@@ -202,11 +146,57 @@ wait_for_swarm_container() {
   exit 1
 }
 
+sync_database_user_credentials() {
+  local db_container_id
+
+  db_container_id="$(docker ps \
+    --filter "label=com.docker.swarm.service.name=${STACK_NAME}_matomo-db" \
+    --filter "status=running" \
+    --format '{{.ID}}' | head -n1)"
+  [[ -n "${db_container_id}" ]] || {
+    log "ERROR: running container not found for Swarm service ${STACK_NAME}_matomo-db"
+    exit 1
+  }
+
+  log "Synchronizing MariaDB application user credentials"
+  docker exec -i "${db_container_id}" sh -se <<'SYNC_DB_USER'
+db_name="${MARIADB_DATABASE:?MARIADB_DATABASE is required}"
+db_user="${MARIADB_USER:?MARIADB_USER is required}"
+db_pass="$(cat /run/secrets/db_password)"
+root_pass="$(cat /run/secrets/db_root_password)"
+
+sql_string() {
+  printf "%s" "$1" | sed "s/'/''/g"
+}
+
+sql_ident() {
+  printf "%s" "$1" | sed 's/`/``/g'
+}
+
+db_name_escaped="$(sql_ident "$db_name")"
+db_user_escaped="$(sql_string "$db_user")"
+db_pass_escaped="$(sql_string "$db_pass")"
+
+MYSQL_PWD="$root_pass" mariadb -uroot <<SQL
+CREATE DATABASE IF NOT EXISTS \`${db_name_escaped}\`;
+CREATE USER IF NOT EXISTS '${db_user_escaped}'@'%' IDENTIFIED BY '${db_pass_escaped}';
+ALTER USER '${db_user_escaped}'@'%' IDENTIFIED BY '${db_pass_escaped}';
+GRANT ALL PRIVILEGES ON \`${db_name_escaped}\`.* TO '${db_user_escaped}'@'%';
+FLUSH PRIVILEGES;
+SQL
+SYNC_DB_USER
+}
+
 run_post_deploy_hooks() {
   local env_file="$1"
 
   wait_for_swarm_container matomo-app
   wait_for_swarm_container matomo-db
+
+  sync_database_user_credentials
+
+  log "Re-applying Matomo writable directory permissions"
+  ORCHESTRATOR_ENV_FILE="${env_file}" bash "${SCRIPT_DIR}/init-volumes.sh" --matomo-only
 
   log "Applying Matomo runtime config"
   ORCHESTRATOR_ENV_FILE="${env_file}" \
@@ -216,15 +206,14 @@ run_post_deploy_hooks() {
 }
 
 deploy_swarm() {
-  local compose_file swarm_file raw_manifest deploy_manifest render_env_file
+  local compose_file swarm_file
 
   compose_file="$(detect_compose_file)"
   swarm_file="docker-compose.swarm.yml"
-  raw_manifest="$(mktemp "${PROJECT_ROOT}/.${STACK_NAME}.stack.raw.XXXXXX.yml")"
-  deploy_manifest="$(mktemp "${PROJECT_ROOT}/.${STACK_NAME}.stack.deploy.XXXXXX.yml")"
-  render_env_file="$(mktemp /dev/shm/matomo-render-env-XXXXXX)"
-  chmod 600 "${render_env_file}"
-  trap 'rm -f "${raw_manifest:-}" "${deploy_manifest:-}" "${render_env_file:-}"' RETURN
+  RAW_MANIFEST="$(mktemp "${PROJECT_ROOT}/.${STACK_NAME}.stack.raw.XXXXXX.yml")"
+  DEPLOY_MANIFEST="$(mktemp "${PROJECT_ROOT}/.${STACK_NAME}.stack.deploy.XXXXXX.yml")"
+  RENDER_ENV_FILE="$(mktemp /dev/shm/matomo-render-env-XXXXXX)"
+  chmod 600 "${RENDER_ENV_FILE}"
 
   if [[ -z "${compose_file}" ]]; then
     log "ERROR: compose file not found (expected docker-compose.yaml|yml)"
@@ -249,22 +238,24 @@ deploy_swarm() {
 
   run_ansible_secrets_if_configured
   run_deploy_adjacent_hooks "${ENV_FILE}"
-  prepare_swarm_secrets "${ENV_FILE}" "${render_env_file}"
+  prepare_swarm_secrets "${ENV_FILE}" "${RENDER_ENV_FILE}"
 
-  log "Rendering Swarm manifest (stack=${STACK_NAME}, env_file=${render_env_file})"
-  docker compose --env-file "${render_env_file}" \
+  log "Rendering Swarm manifest (stack=${STACK_NAME}, env_file=${RENDER_ENV_FILE})"
+  docker compose --env-file "${RENDER_ENV_FILE}" \
     -f "${compose_file}" \
     -f "${swarm_file}" \
-    config > "${raw_manifest}"
+    config > "${RAW_MANIFEST}"
 
-  awk 'NR==1 && $1=="name:" {next} {print}' "${raw_manifest}" > "${deploy_manifest}"
+  awk 'NR==1 && $1=="name:" {next} {print}' "${RAW_MANIFEST}" > "${DEPLOY_MANIFEST}"
 
   log "Deploying stack ${STACK_NAME}"
-  docker stack deploy -c "${deploy_manifest}" "${STACK_NAME}"
+  docker stack deploy -c "${DEPLOY_MANIFEST}" "${STACK_NAME}"
   run_post_deploy_hooks "${ENV_FILE}"
 
   log "Swarm deploy completed"
 }
+
+trap cleanup EXIT
 
 cd "${PROJECT_ROOT}"
 
